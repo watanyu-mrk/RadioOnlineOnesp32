@@ -205,26 +205,27 @@ int16_t digitX(uint8_t idx) {  // idx 0..5 = H H : M M : S S, relative to the cl
   return (int16_t)((idx / 2) * PAIR_PITCH + (idx % 2) * DIG_PITCH);
 }
 
-void colon(lv_draw_ctx_t *ctx, uint8_t pair, lv_color_t c) {
-  int16_t x = (int16_t)(pair * PAIR_PITCH + DIG_PITCH + DIG_W + 8);
-  fillRect(ctx, x, DIG_H / 3, DIG_T, DIG_T, c);
-  fillRect(ctx, x, 2 * DIG_H / 3, DIG_T, DIG_T, c);
+// Coordinates are relative to the clock box; the caller passes its screen origin.
+void colon(lv_draw_ctx_t *ctx, int16_t ox, int16_t oy, uint8_t pair, lv_color_t c) {
+  int16_t x = (int16_t)(ox + pair * PAIR_PITCH + DIG_PITCH + DIG_W + 8);
+  fillRect(ctx, x, (int16_t)(oy + DIG_H / 3), DIG_T, DIG_T, c);
+  fillRect(ctx, x, (int16_t)(oy + 2 * DIG_H / 3), DIG_T, DIG_T, c);
 }
 
-void clockFace(lv_draw_ctx_t *ctx, uint8_t hour, uint8_t minute, uint8_t second,
-               bool valid) {
+void clockFace(lv_draw_ctx_t *ctx, int16_t ox, int16_t oy, uint8_t hour, uint8_t minute,
+               uint8_t second, bool valid) {
   const uint8_t d[6] = {(uint8_t)((hour / 10) % 10), (uint8_t)(hour % 10),
                         (uint8_t)((minute / 10) % 10), (uint8_t)(minute % 10),
                         (uint8_t)((second / 10) % 10), (uint8_t)(second % 10)};
   lv_color_t amber = rgb(P_AMBER);
   lv_color_t ghost = rgb(P_AMBER_DIM);
   for (uint8_t i = 0; i < 6; i++) {
-    digit(ctx, digitX(i), 0, d[i], valid ? amber : ghost, ghost);
+    digit(ctx, (int16_t)(ox + digitX(i)), oy, d[i], valid ? amber : ghost, ghost);
   }
   // One-second blink on the colons, like a deck counter.
   lv_color_t c = (valid && (second & 1)) ? amber : ghost;
-  colon(ctx, 0, c);
-  colon(ctx, 1, c);
+  colon(ctx, ox, oy, 0, c);
+  colon(ctx, ox, oy, 1, c);
 }
 
 // Truncates with ".." so a long value never overruns its cell.
@@ -295,7 +296,7 @@ void LvUi::drawItem(lv_event_t *e) {
       break;
     }
     case K_CLOCK:
-      clockFace(ctx, it->a, it->b, it->c, it->flag);
+      clockFace(ctx, x, y, it->a, it->b, it->c, it->flag);
       break;
     case K_DISC: {
       const int16_t cx = (int16_t)(x + 15), cy = (int16_t)(y + 15);

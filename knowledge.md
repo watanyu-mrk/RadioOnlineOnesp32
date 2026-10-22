@@ -210,6 +210,17 @@ dependency in `platformio.ini` is the only other thing to take out.
   `raw=` part of that log line: raw correct + mapped 0 means the mapper, and the GT911 was
   proven healthy the whole time (status `0x80`, config block 0x8047–0x80FE readable,
   `ok/fail = 99400/0`).
+- **LVGL draw callbacks must use absolute screen coordinates.** 2026-10-22: the 7-segment
+  clock vanished after the port because `clockFace()` drew at `(digitX(i), 0)` — relative to
+  the object — while `fillRect()` hands `lv_draw_rect()` a screen-space area. Everything
+  landed outside the object box and LVGL clipped it away silently: no error, the callback
+  still ran every second (`ui` pass cost was normal). Any `LV_EVENT_DRAW_MAIN` callback here
+  gets `co.x1/co.y1` from `lv_obj_get_coords()` and must add them to every draw primitive.
+- **Verify the panel from the framebuffer, not by eye.** `Arduino_RGB_Display::getFramebuffer()`
+  returns the PSRAM frame; dumping it as an 8-pixel ASCII map over serial shows whether a
+  region is background or drawn, and it caught this bug (clock box was `.` everywhere).
+  Remember to force `lv_obj_invalidate(lv_scr_act())` + `lv_refr_now(NULL)` first, otherwise
+  the dump shows stale pixels from the last partial refresh.
 - **Every `LvUi::Action` needs a `case` in `pumpActions()`.** `ACT_LIST_CLOSE` was missing
   during the port and the CLOSE button silently did nothing, so the panel stayed on the list
   and the main-screen buttons looked dead — the enum compiles fine without it. When adding an

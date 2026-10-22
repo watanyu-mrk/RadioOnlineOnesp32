@@ -169,9 +169,22 @@ python tools/svg2header.py --out include/ui_icons.h \
 | **แยกโมดูล (2026-10-22 09:1x–09:26)** | ผ่าน | 3 env คอมไพล์ผ่าน (`stream_test`, `esp32-s3-4848s040`, `audio_test`); บนบอร์ด: สตรีม MP3 128 kbps `played=+5s`, buffer ~258 KB, heap 91,824 B, ui 8.8–19.5 ms; stop→play `played=+2..3s` ไม่มี i2s error; สลับสถานี `b` กลับมา MP3 ได้; `tools/portal_check.py` → `GET /` 200 (4,458 B), scan 6 เครือข่าย, add/del, รีบูตกลับมาเล่น |
 | **ย้าย UI ไป LVGL (2026-10-22 10:2x–11:00)** | ผ่าน | 3 env คอมไพล์ผ่าน; บูตขึ้น `lvgl : v8.3.11`, `display : ready (ST7701 480x480, LVGL) (74 LVGL objects)`, heap ~82 KB, สตรีม Talay AAC 96 kbps + COOLfahrenheit MP3 128 kbps เล่นได้ต่อเนื่อง; ทดสอบปุ่มด้วยการฉีดพิกัดเข้า indev ชั่วคราว (โค้ดทดสอบถอดออกแล้ว): LIST→เลือกแถว = `picked 1`, เลื่อนหน้า→`picked 8 "Talay"`, CLOSE กลับหน้าแรกแล้ว NEXT/PREV/PLAY-STOP/VOLUME ทำงาน, SETUP เปิดพอร์ทัล + DONE รีบูตเอง; `GET /` 200 (4,458 B) + `/api/status` 200 จาก LAN ระหว่างหน้า SETUP แสดงอยู่ |
 | ทัชจริงบนปุ่ม LVGL | **ผ่าน** (ผู้ใช้ยืนยัน “ทัชตรงแล้ว” 2026-10-22 14:3x) | `touch : down x=0 y=0 (raw 156,410)` = ค่าดิบถูกต้อง แต่ `TouchCalibration::map()` คืน (0,0) เพราะ branch identity หาย; แก้แล้วใน `src/display/touch_calibration.cpp` |
+| นาฬิกา 7-seg บน LVGL | **ผ่าน** (ยืนยันจาก framebuffer map) | `clockFace()` วาดที่พิกัด relative → ถูก clip; แก้ให้บวก `ox,oy` แล้วเห็น `15:02:39` ในแผนที่ 8 px |
 | ตัวควบคุม GT911 ยังสแกนและตอบ I²C | ผ่าน | `ok/fail = 99400 / 0`, `status=0x80`, product id `911`, config `ver 0x43 xmax/ymax 480/480`, config block 0x8047–0x80FE อ่านครบ |
 
 ## 4. ปัญหาที่ค้างอยู่
+
+**นาฬิกา 7-segment หายไปจากหน้า faceplate — แก้แล้ว (2026-10-22 15:0x):**
+อาการคือกรอบนาฬิกา (x 22–313, y 192–257) ว่างเป็นพื้นหลังสนิท ทั้งที่ข้อมูลเวลามาจริง
+(`state : time=15:02:39`) และ LVGL ก็เรนเดอร์ทุกวินาที (`ui`~36 ms/รอบ)
+ต้นเหตุ: `clockFace()` ใน `src/ui/lv_ui.cpp` วาดด้วยพิกัด **relative** (`digitX(i)`,
+`y = 0`) แต่ `fillRect()` ของพอร์ตนี้เรียก `lv_draw_rect()` ซึ่งต้องการพิกัด **absolute**
+บนจอ → ทุก segment ถูก clip ทิ้งเพราะอยู่นอกกล่องของ object
+แก้โดยรับ `ox, oy` (มุมบนซ้ายของ object) เข้า `clockFace()`/`colon()` แล้วบวกก่อนวาด
+วิธีพิสูจน์โดยไม่ต้องใช้ตา: ดัมป์ framebuffer (`Arduino_RGB_Display::getFramebuffer()`)
+เป็นแผนที่ ASCII ทุก 8 px — ก่อนแก้พบว่าพื้นที่นาฬิกาเป็น `.` ทั้งบล็อก หลังแก้เห็นลาย
+segment ของ `15:02:39` ครบ (โค้ดดัมป์เป็น TEMP — ถอดออกแล้ว)
+
 
 **จอไม่ตอบสนองต่อทัช / จุดแดงขึ้นมุมซ้ายบนตลอด — แก้แล้วและยืนยันบนจอจริง (2026-10-22 14:1x–14:3x):**
 อาการคือแตะตรงไหนก็ได้ marker สีแดงไปโผล่ที่ (0,0) และไม่มีปุ่มไหนทำงาน ทั้งที่ GT911
