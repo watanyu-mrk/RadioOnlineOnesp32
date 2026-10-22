@@ -49,6 +49,9 @@ static uint32_t lastStats = 0;
 static uint32_t lastPos = 0;
 static uint32_t gUiMaxUs = 0;     // slowest lv_timer_handler() pass this second
 static uint32_t gUiReportUs = 0;  // snapshot for the stats line
+// Repaint switch, normally UI_DYNAMIC. 'u' turns the periodic redraw off so a sound test
+// can tell whether the display work is what the audio problem follows.
+static bool gUiDynamic = UI_DYNAMIC;
 
 // ---- setup / station helpers ------------------------------------------------------------
 
@@ -114,6 +117,9 @@ static bool handleSerial() {
       gPlayer.changeStation(-1);
     } else if (c == 's' || c == 'S') {
       gPlayer.toggle();
+    } else if (c == 'u' || c == 'U') {
+      gUiDynamic = !gUiDynamic;
+      Serial.printf("test      : panel repaint %s (sound test)\n", gUiDynamic ? "ON" : "OFF");
     } else if (c == 't' || c == 'T') {
       gTouch.dump();
       gTouch.dumpConfig();
@@ -211,7 +217,7 @@ static void pollCalibration() {
 
 static void refreshPanel() {
   static uint32_t lastUi = 0;
-  if (!(uiReady && UI_DYNAMIC) || gCal.active()) return;
+  if (!(uiReady && gUiDynamic) || gCal.active()) return;
   if (millis() - lastUi < 1000) return;
   lastUi = millis();
   gUiReportUs = gUiMaxUs;
