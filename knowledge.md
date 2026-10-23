@@ -65,17 +65,34 @@ Full sourced table: `docs/phase1_hardware_audit.md`.
 
 ## Audio constraints (important)
 
-- **User's board is the no-relay variant**, has NS4168 + speaker connected, and is still silent
-  after a verified I²S tone test (see `docs/phase3_audio_status.md`).
+- **User's board is the no-relay variant**, has NS4168 + speaker connected, and speaker audio is
+  confirmed working (2026-10-21, after the R21–R23 link). The silent-tone investigation that
+  found the missing link is written up in `docs/phase3_audio_status.md`.
 - Pins are right: vendor pin table says IO1 = I2S-BCLK, IO2 = I2S-LRCLK, IO40 = I2S-DIN.
-- Confirmed on the actual PCB: the 0 Ω parts sit at **R25/R26/R27** (ULN2003 relay-driver
-  side) and **R21/R22/R23 are empty**, so GPIO1/2/40 never reach the NS4168. Audio needs
-  0 Ω added at R21/R22/R23 (R25–R27 can stay; there are no relays to load the driver).
-  Until that link exists, any "no sound" result is a hardware gap, not a software bug.
+- Confirmed on the actual PCB: the 0 Ω parts shipped at **R25/R26/R27** (ULN2003 relay-driver
+  side) with **R21/R22/R23 empty**, so GPIO1/2/40 never reached the NS4168. The fix applied on
+  this board was to bridge R21/R22/R23 (R25–R27 left in place; there are no relays to load the
+  driver) — speaker audio is confirmed working since then. A "no sound" result before that
+  link exists is a hardware gap, not a software bug.
 - NS4168 is a **mono BTL speaker amp** (CTRL pin selects L or R channel), not a line output.
   Never feed its outputs to an AUX/RCA input.
-- For stereo line-out, use an external I²S DAC (PCM5102A) on the same BCLK/LRCLK/DIN — the
-  same three pins, tapped at the L1/L2/L3 terminal, no soldering on the board.
+- **External stereo line-out: PCM5102A on the same I²S bus.** No firmware change — the ESP32
+  is the I²S master and I²S is a multi-drop bus, so the DAC listens in parallel with the
+  NS4168 (`setPinout(1, 2, 40)` stays as is). Wiring: BCK←GPIO1, LRCK←GPIO2, DIN←GPIO40,
+  plus VIN and a **shared GND**.
+  - Solder point: the **R21/R22/R23 pads** are the recommended tap (the 0 Ω bridge makes both
+    pads of each part the same net, so a 30 AWG wire on either side works). The **L1/L2/L3
+    terminal is not automatically the same net** — on relay variants that side can be the
+    ULN2003 open-collector output, so verify continuity to the NS4168 pins before trusting it.
+    Tapping the NS4168 pins directly is not recommended (0.65 mm SOP-8).
+  - Which R is which signal is **not documented** — identify it with a continuity check from
+    NS4168 pin 2 (LRCLK), pin 3 (BCLK), pin 4 (SDATA/DIN). Do not guess from the silkscreen.
+  - Module straps: **SCK→GND** (internal PLL, no MCLK needed), **XSMT→3.3 V** (unmute),
+    **FMT/DEMP/FLT→GND** (I²S standard, no de-emphasis, normal filter).
+  - Power: boards with an AMS1117-3.3 need **5 V** on VIN — feeding 3.3 V leaves ~2.3 V after
+    dropout and the DAC may not start. A regulator-less board takes 3.3 V directly.
+  - Volume/mute from the UI still apply (the library scales the samples before I²S), and the
+    onboard speaker can stay connected or be unplugged; nothing needs desoldering.
 
 ## Commands
 
