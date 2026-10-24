@@ -53,6 +53,27 @@ void SettingsStore::saveActive(uint8_t idx) {
   if (opened_) prefs_.putUChar("active", idx);
 }
 
+// ---- equalizer ------------------------------------------------------------------------
+
+bool SettingsStore::loadEq(uint8_t &preset, int8_t &low, int8_t &mid, int8_t &high) {
+  preset = 0;
+  low = mid = high = 0;
+  if (!opened_ || !prefs_.isKey("eqp")) return false;
+  preset = prefs_.getUChar("eqp", 0);
+  low = prefs_.getChar("eql", 0);
+  mid = prefs_.getChar("eqm", 0);
+  high = prefs_.getChar("eqh", 0);
+  return true;
+}
+
+void SettingsStore::saveEq(uint8_t preset, int8_t low, int8_t mid, int8_t high) {
+  if (!opened_) return;
+  prefs_.putUChar("eqp", preset);
+  prefs_.putChar("eql", low);
+  prefs_.putChar("eqm", mid);
+  prefs_.putChar("eqh", high);
+}
+
 // ---- touch calibration ----------------------------------------------------------------
 
 bool SettingsStore::loadTouchCal(TouchCalData &out) {

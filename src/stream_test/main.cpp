@@ -19,6 +19,7 @@
 #include "secrets.h"
 
 #include "audio/audio_engine.h"
+#include "audio/equalizer.h"
 #include "display/display_panel.h"
 #include "display/lv_port.h"
 #include "display/touch_calibration.h"
@@ -34,6 +35,7 @@ static SettingsStore gStore;
 static StationManager gStations;
 static NetworkLink gNet;
 static AudioEngine gAudio;
+static Equalizer gEq;
 static RadioPlayer gPlayer;
 static DisplayPanel gPanel;
 static TouchGt911 gTouch;
@@ -46,6 +48,7 @@ static bool touchReady = false;
 static bool setupMode = false;
 static uint32_t lastWifiRetry = 0;
 static uint32_t lastStats = 0;
+static uint32_t lastVu = 0;
 static uint32_t lastPos = 0;
 static uint32_t gUiMaxUs = 0;     // slowest lv_timer_handler() pass this second
 static uint32_t gUiReportUs = 0;  // snapshot for the stats line
@@ -88,6 +91,16 @@ static void pickStation(uint8_t idx) {
   Serial.printf("station   : picked %u \"%s\"\n", (unsigned)idx + 1,
                 gStations.station(idx).name);
   gPlayer.playActive();
+}
+
+static void openEqScreen() {
+  static const char *names[EQ_PRESET_COUNT];
+  uint8_t n = 0;
+  while (n < EQ_PRESET_COUNT) {
+    names[n] = Equalizer::presetName(n);
+    n++;
+  }
+  gUi.openEq(names, n);
 }
 
 static void startCalibration() {
@@ -168,6 +181,17 @@ static void pumpActions() {
         break;
       }
       case LvUi::ACT_LIST_CLOSE: gUi.closeList(); break;
+      case LvUi::ACT_EQ: openEqScreen(); break;
+      case LvUi::ACT_EQ_PRESET:
+        gEq.selectPreset(gUi.eqPresetIndex());
+        gUi.setEq(gEq.preset(), gEq.band(0), gEq.band(1), gEq.band(2));
+        break;
+      case LvUi::ACT_EQ_BAND_DOWN:
+      case LvUi::ACT_EQ_BAND_UP:
+        gEq.adjustBand(gUi.eqBand(), a == LvUi::ACT_EQ_BAND_UP ? 1 : -1);
+        gUi.setEq(gEq.preset(), gEq.band(0), gEq.band(1), gEq.band(2));
+        break;
+      case LvUi::ACT_EQ_CLOSE: gUi.showMain(); break;
       case LvUi::ACT_SETUP: enterSetup(); return;
       case LvUi::ACT_SETUP_DONE:
         Serial.println("setup     : DONE tapped, rebooting");
@@ -211,6 +235,15 @@ static void pollCalibration() {
   } else if (!raw.pressed) {
     calPressed = false;
   }
+}
+
+// VU bars are a 20 Hz view of the real audio level; only the meter object is redrawn.
+static void refreshVu() {
+  if (!(uiReady && gUiDynamic) || gCal.active()) return;
+  if (millis() - lastVu < 50) return;
+  lastVu = millis();
+  uint16_t vu = gAudio.vu();  // rrrrrrrr llllllll
+  gUi.setVu((uint8_t)(vu & 0xFF), (uint8_t)(vu >> 8));
 }
 
 // ---- panel refresh + stats --------------------------------------------------------------
@@ -258,13 +291,14 @@ static void logStats() {
   char clk[12] = "--:--:--";
   if (gNet.clock(hh, mm, ss)) snprintf(clk, sizeof(clk), "%02u:%02u:%02u", hh, mm, ss);
   Serial.printf("state     : running=%d played=%lus (+%lus) bitrate=%lu codec=%s %luHz/%uch "
-                "buf=%lu rssi=%d heap=%u time=%s vol=%u ui=%luus touch=%lu/%lu st=0x%02X "
-                "vu=0x%04X\n",
+                "buf=%lu rssi=%d heap=%u time=%s vol=%u eq=%s ui=%luus touch=%lu/%lu "
+                "st=0x%02X vu=0x%04X\n",
                 gAudio.running() ? 1 : 0, (unsigned long)played, (unsigned long)delta,
                 (unsigned long)gAudio.bitrate(), gAudio.codec(),
                 (unsigned long)gAudio.sampleRate(), gAudio.channels(),
                 (unsigned long)gAudio.bufferBytes(), gNet.rssi(), (unsigned)ESP.getFreeHeap(),
-                clk, (unsigned)gAudio.volume(), (unsigned long)gUiReportUs,
+                clk, (unsigned)gAudio.volume(), Equalizer::presetName(gEq.preset()),
+                (unsigned long)gUiReportUs,
                 (unsigned long)gTouch.okReads(), (unsigned long)gTouch.failReads(),
                 gTouch.lastStatus(), (unsigned)gAudio.vu());
   lastPos = played;
@@ -300,6 +334,7 @@ void setup() {
                 gStations.hasWifi() ? "stored" : "MISSING");
 
   gAudio.begin();
+  gEq.begin(&gAudio, &gStore);
   gPlayer.begin(&gStations, &gAudio);
 
   touchReady = gTouch.begin();
@@ -319,7 +354,10 @@ void setup() {
   Serial.printf("display   : %s (%u LVGL objects)\n",
                 uiReady ? "ready (ST7701 480x480, LVGL)" : "INIT FAILED",
                 (unsigned)gUi.objectCount());
-  if (uiReady) gUi.showMain();
+  if (uiReady) {
+    gUi.showMain();
+    gUi.setEq(gEq.preset(), gEq.band(0), gEq.band(1), gEq.band(2));
+  }
 
   if (!gStations.hasWifi()) {
     enterSetup();  // nothing stored yet: bring up the phone portal instead of failing
@@ -372,6 +410,7 @@ void loop() {
   }
   pollCalibration();
   gPlayer.tick();
+  refreshVu();
   refreshPanel();
   logStats();
 

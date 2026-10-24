@@ -10,8 +10,8 @@
 // pixel icons and meter are custom draw callbacks. LVGL owns the object tree, invalidation,
 // screens and the input device; the UI still never touches audio or network.
 //
-// Screens: main faceplate, station list, AP setup, touch calibration. Actions are queued
-// and collected by the sketch with takeAction().
+// Screens: main faceplate (with live L/R VU meters), station list, equalizer, AP setup,
+// touch calibration. Actions are queued and collected by the sketch with takeAction().
 
 #include <Arduino.h>
 #include <lvgl.h>
@@ -58,6 +58,11 @@ class LvUi {
     ACT_LIST_CLOSE = 7,  // list dismissed
     ACT_SETUP = 8,       // enter the Wi-Fi / station setup portal
     ACT_SETUP_DONE = 9,  // leave setup (reboot)
+    ACT_EQ = 10,         // open the equalizer screen
+    ACT_EQ_CLOSE = 11,   // back to the faceplate
+    ACT_EQ_PRESET = 12,  // a preset was tapped, see eqPresetIndex()
+    ACT_EQ_BAND_DOWN = 13,  // a band -/+ was tapped, see eqBand()
+    ACT_EQ_BAND_UP = 14,
   };
 
   bool begin();
@@ -67,11 +72,21 @@ class LvUi {
   int8_t takeAction();
 
   uint8_t listIndex() const { return listSel_; }
+  uint8_t eqPresetIndex() const { return eqPresetSel_; }
+  uint8_t eqBand() const { return eqBandSel_; }
+
+  // Live VU levels (0..255 per channel). Invalidates only the small meter object, so it
+  // is cheap enough to call at 20 Hz from the main loop.
+  void setVu(uint8_t left, uint8_t right);
+
+  // Renders the tone state the sketch got from the Equalizer module.
+  void setEq(uint8_t preset, int8_t low, int8_t mid, int8_t high);
 
   // ---- screens ------------------------------------------------------------------------
   void showMain();
   void openList(const char *const *names, uint8_t count);
   void closeList();
+  void openEq(const char *const *names, uint8_t count);
   void setupScreen(const char *ssid, const char *pass, const char *ip);
   void calibrationTarget(uint8_t step, uint8_t total, int16_t tx, int16_t ty);
 
@@ -89,6 +104,8 @@ class LvUi {
     K_TARGET,
     K_ARROW,
     K_MARK,
+    K_VU,
+    K_EQBAR,
   };
 
   struct Item {
@@ -118,17 +135,20 @@ class LvUi {
     bool pressed = false;
   };
 
-  static constexpr uint8_t MAX_ITEMS = 80;
-  static constexpr uint8_t MAX_BTNS = 24;
+  static constexpr uint8_t MAX_ITEMS = 160;  // five screens + the equalizer's 8 presets
+  static constexpr uint8_t MAX_BTNS = 40;
   static constexpr uint8_t LIST_ROWS = 7;
   static constexpr uint8_t LIST_MAX = RADIO_MAX_STATIONS;
+  static constexpr uint8_t EQ_PRESETS = 8;
 
   // ---- construction -------------------------------------------------------------------
   void buildMain(lv_obj_t *scr);
   void buildList(lv_obj_t *scr);
+  void buildEq(lv_obj_t *scr);
   void buildSetup(lv_obj_t *scr);
   void buildCal(lv_obj_t *scr);
   void refreshList();
+  void refreshEq();
 
   lv_obj_t *panel(lv_obj_t *parent, int16_t x, int16_t y, int16_t w, int16_t h,
                   bool inset);
@@ -165,6 +185,7 @@ class LvUi {
   // ---- state --------------------------------------------------------------------------
   lv_obj_t *scrMain_ = nullptr;
   lv_obj_t *scrList_ = nullptr;
+  lv_obj_t *scrEq_ = nullptr;
   lv_obj_t *scrSetup_ = nullptr;
   lv_obj_t *scrCal_ = nullptr;
   lv_obj_t *cur_ = nullptr;
@@ -187,8 +208,8 @@ class LvUi {
   Item *kbps_ = nullptr;
   Item *fmt_ = nullptr;
   Item *clock_ = nullptr;
-  Item *meter_ = nullptr;
-  Item *meterValue_ = nullptr;
+  Item *vu_ = nullptr;
+  Item *bufferValue_ = nullptr;
   Item *disc_ = nullptr;
   Item *playIcon_ = nullptr;
   Item *playLabel_ = nullptr;
@@ -204,6 +225,18 @@ class LvUi {
   Item *listNums_[LIST_ROWS] = {nullptr};
   Item *listUp_ = nullptr;
   Item *listDown_ = nullptr;
+
+  Item *eqCustom_ = nullptr;
+  BtnData *eqPresetBtns_[EQ_PRESETS] = {nullptr};
+  Item *eqPresetLabels_[EQ_PRESETS] = {nullptr};
+  Item *eqBandValues_[3] = {nullptr};
+  Item *eqBars_[3] = {nullptr};
+  uint8_t eqPresetCount_ = EQ_PRESETS;
+  uint8_t eqPresetSel_ = 0;  // last tapped preset (for the action, not the highlight)
+  uint8_t eqBandSel_ = 0;    // last tapped band (for the action)
+  uint8_t eqPreset_ = 0;
+  int8_t eqGain_[3] = {0, 0, 0};
+  uint8_t vuFrame_ = 0;
 
   Item *calTitle_ = nullptr;
   Item *calTarget_ = nullptr;

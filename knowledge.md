@@ -5,12 +5,18 @@
 `docs/status.md` is the single source of truth for "what is flashed on the board right now,
 what is verified, and what to do next". Keep it updated at the end of every working session.
 
-Current firmware on COM5: `stream_test` with the retro hi-fi status screen (Pixelarticons
-icons, Bangkok wall clock on a 7-segment display, control strip PREV/PLAY/NEXT/LIST/SETUP,
-touch volume rocker), the RGB DRAM bounce buffer, and the AP setup portal for Wi-Fi +
+Firmware = `stream_test` with the retro hi-fi status screen (Pixelarticons icons, Bangkok
+wall clock on a 7-segment display, control strip PREV/PLAY/NEXT/LIST/EQ/SETUP, touch volume
+rocker, live L/R VU meter), the RGB DRAM bounce buffer, and the AP setup portal for Wi-Fi +
 stations. Audio works after the R21–R23 solder link and the display
 jitter is fixed — both confirmed by the user on 2026-10-21, so the bounce buffer and pclk
 table are now "do not regress" settings rather than open questions.
+
+**Branches (2026-10-24):** `main` is tagged **`v1-basic`** (the last verified firmware).
+Work continues on **`v2-equ`**, which adds the EQUALIZER screen (8 presets + manual 3-band
+±1 dB, NVS-backed) and the VU meter. It compiles (`stream_test` SUCCESS, RAM 23.2 %,
+flash 33.0 %) but has **not** been flashed or listened to yet — treat EQ/VU as unverified
+until the board run in `docs/status.md` §3 is done.
 
 The firmware is split into modules (2026-10-22): `src/stream_test/main.cpp` only wires
 `src/storage` + `src/radio` + `src/audio` + `src/display` + `src/ui` + `src/web` together.
@@ -143,12 +149,13 @@ src/storage/settings_store        NVS (radio: wifi/stations; touch3: calibration
 src/radio/station_manager         station list + active + next/prev
 src/radio/network_link            Wi-Fi STA, IP string, NTP/Bangkok clock
 src/radio/radio_player            play/stop/next/prev + 15 s restart watchdog
-src/audio/audio_engine            ESP32-audioI2S wrapper (setPinout once, volume, ICY)
+src/audio/audio_engine            ESP32-audioI2S wrapper (setPinout once, volume, ICY, tone)
+src/audio/equalizer               3-band presets + custom gains, NVS via SettingsStore
 src/display/display_panel         ST7701 + backlight + DRAM bounce buffer
 src/display/touch_gt911           polled GT911 driver (raw coordinates)
 src/display/touch_calibration     raw -> screen (3x3 grid + affine), NVS backed
 src/display/lv_port               LVGL display (480x40 PSRAM strip) + GT911 pointer indev
-src/ui/lv_ui                      retro faceplate in LVGL (4 screens + action queue)
+src/ui/lv_ui                      retro faceplate in LVGL (5 screens + action queue, VU meter)
 src/ui/legacy/ui_status           previous Arduino_GFX faceplate (kept for rollback)
 src/web/web_setup                 AP portal (HTML page in PROGMEM)
 src/audio_test/main.cpp           Phase 3 I2S tone test (its own env)
@@ -186,6 +193,20 @@ dependency in `platformio.ini` is the only other thing to take out.
 
 ## Gotchas
 
+- **Tone control has to wait for the I2S channel.** `Audio::setTone()` recalculates its
+  biquads using the current sample rate, so it is only called from `AudioEngine::play()`
+  after the once-per-boot `setPinout()`. `connecttohost()` calls `setSampleRate()`, which
+  recalculates the coefficients again from the stored gains — that is why the EQ setting
+  survives a station change without re-applying it. The library clamps each band to
+  -12..+12 dB and applies a matching pre-gain, so heavy presets do not clip digitally.
+- **VU level byte order + cost.** `getVUlevel()` returns `(right_peak << 8) | left_peak`,
+  each 0..255 (peak with hold/release inside the library). `main.cpp` polls it every 50 ms
+  and `LvUi::setVu()` invalidates only the 420x36 meter object, never the whole screen.
+  Keep it that way: a full-faceplate redraw per VU frame would collide with the audio work.
+  The AAC station reports a constant `vu=0x0101`, so the VU bars only mean something on MP3.
+- **`LvUi` object/button arrays are fixed-size.** The equalizer screen pushed the counts
+  past the old `MAX_ITEMS = 80` / `MAX_BTNS = 24`, so they are now 160 / 40 (~5 KB more
+  DRAM). If another screen is added, raise them and check the boot log's object count.
 - **Pinout is image-only in the PDF.** `pdftotext` on the "Interface Description" page
   returns no table — the pin/GPIO map is a picture. Pin values above come from community
   projects for this exact model; never infer from a different 4848S040 variant.

@@ -347,6 +347,48 @@ void LvUi::drawItem(lv_event_t *e) {
       fillRect(ctx, (int16_t)(cx - 2), (int16_t)(cy + 11), 4, 8, c);
       break;
     }
+    case K_VU: {
+      // Two segmented L/R bars with a peak-hold marker; the peaks come from the audio
+      // library (0..255, right in the MSB of getVUlevel()).
+      constexpr uint8_t SEGS = 24;
+      const int16_t barX = 12;
+      const int16_t segW = (408 - (SEGS - 1) * 2) / SEGS;
+      for (uint8_t side = 0; side < 2; side++) {
+        const int16_t by = (int16_t)(side * 20);
+        uint8_t level = side == 0 ? it->a : it->b;
+        uint8_t peak = (uint8_t)(side == 0 ? it->p1 : it->p2);
+        uint8_t lit = (uint8_t)(((uint16_t)level * SEGS + 127) / 255);
+        for (uint8_t s = 0; s < SEGS; s++) {
+          lv_color_t c = s >= lit ? rgb(P_AMBER_DIM)
+                                  : (s >= 20 ? rgb(P_RED)
+                                             : (s >= 15 ? rgb(P_AMBER) : rgb(P_GREEN)));
+          fillRect(ctx, (int16_t)(x + barX + s * (segW + 2)), (int16_t)(y + by), segW, 16, c);
+        }
+        uint8_t pk = (uint8_t)(((uint16_t)peak * SEGS + 127) / 255);
+        if (pk > 0) {
+          int16_t px = (int16_t)(x + barX + (pk - 1) * (segW + 2) + segW - 2);
+          fillRect(ctx, px, (int16_t)(y + by), 2, 16, rgb(P_CREAM));
+        }
+        drawText(ctx, x, (int16_t)(y + by + 4), side == 0 ? "L" : "R", 1, rgb(P_DIM));
+      }
+      break;
+    }
+    case K_EQBAR: {
+      // Bipolar gain bar for one band: 0 dB in the middle, ±12 dB at the ends.
+      constexpr int16_t w = 104;
+      constexpr int16_t center = w / 2;
+      int16_t pos = (int16_t)(center + ((int)it->a - 12) * center / 12);
+      fillRect(ctx, x, (int16_t)(y + 3), w, 4, rgb(P_AMBER_DIM));
+      if (pos >= center) {
+        fillRect(ctx, (int16_t)(x + center), (int16_t)(y + 1), (int16_t)(pos - center), 8,
+                 rgb(P_GREEN));
+      } else {
+        fillRect(ctx, (int16_t)(x + pos), (int16_t)(y + 1), (int16_t)(center - pos), 8,
+                 rgb(P_AMBER));
+      }
+      fillRect(ctx, (int16_t)(x + center - 1), y, 2, 10, rgb(P_CREAM));
+      break;
+    }
     default:
       break;
   }
@@ -361,8 +403,10 @@ void LvUi::drawButton(lv_event_t *e) {
   lv_area_t co;
   lv_obj_get_coords(obj, &co);
   lv_color_t c = b->pressed ? rgb(P_BG) : rgb(P_AMBER);
-  fillRect(ctx, (int16_t)(co.x1 + 14), (int16_t)(co.y1 + 10), 16, 3, c);
-  if (b->sign == 2) fillRect(ctx, (int16_t)(co.x1 + 20), (int16_t)(co.y1 + 4), 3, 15, c);
+  const int16_t cx = (int16_t)(co.x1 + (co.x2 - co.x1 + 1) / 2);
+  const int16_t cy = (int16_t)(co.y1 + (co.y2 - co.y1 + 1) / 2);
+  fillRect(ctx, (int16_t)(cx - 8), (int16_t)(cy - 1), 16, 3, c);
+  if (b->sign == 2) fillRect(ctx, (int16_t)(cx - 1), (int16_t)(cy - 8), 3, 16, c);
 }
 
 // -----------------------------------------------------------------------------------------
@@ -452,7 +496,7 @@ LvUi::BtnData &LvUi::mkButton(lv_obj_t *parent, int16_t x, int16_t y, int16_t w,
   b.icon = nullptr;
   b.label = nullptr;
 
-  if (icon) b.icon = mkIcon(o, icon, 28, 6, 1, rgb(P_AMBER));
+  if (icon) b.icon = mkIcon(o, icon, (int16_t)((w - UI_ICON_SIZE) / 2), 6, 1, rgb(P_AMBER));
   if (label) {
     int16_t tw = (int16_t)(strlen(label) * 6);
     b.label = mkText(o, label, (int16_t)((w - tw) / 2), 36, 1, rgb(P_DIM));
@@ -558,6 +602,8 @@ bool LvUi::begin() {
   buildMain(scrMain_);
   scrList_ = screen();
   buildList(scrList_);
+  scrEq_ = screen();
+  buildEq(scrEq_);
   scrSetup_ = screen();
   buildSetup(scrSetup_);
   scrCal_ = screen();
@@ -612,10 +658,11 @@ void LvUi::buildMain(lv_obj_t *scr) {
   kbps_ = mkText(scr, "- kbps", 330, 226, 2, rgb(P_AMBER));
   fmt_ = mkText(scr, "- kHz - ch", 330, 246, 1, rgb(P_DIM));
 
-  // Buffer meter.
-  mkText(scr, "BUFFER", 24, 282, 2, rgb(P_DIM));
-  meter_ = newItem(K_METER, scr, 24, 304, 432, 18);
-  meterValue_ = mkText(scr, "-", 0, 282, 2, rgb(P_AMBER), true, 460);
+  // VU panel: live L/R meters (setVu() at 20 Hz) and the buffer read-out.
+  panel(scr, 20, 262, 440, 62, true);
+  mkText(scr, "VU METER", 28, 269, 1, rgb(P_DIM));
+  bufferValue_ = mkText(scr, "BUFFER -", 0, 269, 1, rgb(P_AMBER), true, 452);
+  vu_ = newItem(K_VU, scr, 30, 284, 420, 36);
 
   // Status chiplets: link / heap / volume rocker.
   panel(scr, 24, 332, 136, 44, true);
@@ -634,17 +681,18 @@ void LvUi::buildMain(lv_obj_t *scr) {
   mkButton(scr, 324, 350, 44, 22, nullptr, nullptr, ACT_VOL_DOWN, true, 1);
   mkButton(scr, 412, 350, 44, 22, nullptr, nullptr, ACT_VOL_UP, true, 2);
 
-  // Control strip: prev / play-stop / next / list / setup.
-  mkButton(scr, 24, 390, 80, 52, ICON_LEFT, "PREV", ACT_PREV);
-  BtnData &bPlay = mkButton(scr, 110, 390, 80, 52, nullptr, nullptr, ACT_PLAY);
-  playIcon_ = newItem(K_PLAYICON, scr, 143, 401, 16, 19);
+  // Control strip: prev / play-stop / next / list / equalizer / setup.
+  mkButton(scr, 24, 390, 66, 52, ICON_LEFT, "PREV", ACT_PREV);
+  BtnData &bPlay = mkButton(scr, 95, 390, 66, 52, nullptr, nullptr, ACT_PLAY);
+  playIcon_ = newItem(K_PLAYICON, scr, 120, 401, 16, 19);
   playIcon_->color = rgb(P_AMBER);
   bPlay.icon = playIcon_;
-  playLabel_ = mkText(scr, "PLAY", 138, 426, 1, rgb(P_DIM));
+  playLabel_ = mkText(scr, "PLAY", 116, 426, 1, rgb(P_DIM));
   bPlay.label = playLabel_;
-  mkButton(scr, 196, 390, 80, 52, ICON_RIGHT, "NEXT", ACT_NEXT);
-  mkButton(scr, 282, 390, 80, 52, ICON_LIST, "LIST", ACT_LIST);
-  mkButton(scr, 368, 390, 80, 52, ICON_GEAR, "SETUP", ACT_SETUP);
+  mkButton(scr, 166, 390, 66, 52, ICON_RIGHT, "NEXT", ACT_NEXT);
+  mkButton(scr, 237, 390, 66, 52, ICON_LIST, "LIST", ACT_LIST);
+  mkButton(scr, 308, 390, 66, 52, ICON_BARS, "EQ", ACT_EQ);
+  mkButton(scr, 379, 390, 66, 52, ICON_GEAR, "SETUP", ACT_SETUP);
 
   // Bottom caption strip: firmware, uptime, and the device IP (for the portal).
   fwLabel_ = mkText(scr, fwName_, 24, 458, 1, rgb(P_DIM));
@@ -698,6 +746,46 @@ void LvUi::buildList(lv_obj_t *scr) {
   mkText(close.obj, "CLOSE", 36, 18, 2, rgb(P_CREAM));
 
   refreshList();
+}
+
+void LvUi::buildEq(lv_obj_t *scr) {
+  strokeObj(scr, 6, 6, 468, 468, rgb(P_FRAME));
+  strokeObj(scr, 9, 9, 462, 462, rgb(P_FRAME_DIM));
+
+  mkIcon(scr, ICON_BARS, 24, 20, 2, rgb(P_AMBER));
+  mkText(scr, "EQUALIZER", 84, 22, 3, rgb(P_CREAM));
+  mkText(scr, "TONE PRESET", 84, 56, 1, rgb(P_DIM));
+  eqCustom_ = mkText(scr, "CUSTOM", 0, 52, 2, rgb(P_AMBER), true, 456);
+  lv_obj_add_flag(eqCustom_->obj, LV_OBJ_FLAG_HIDDEN);
+
+  // Eight presets, two columns x four rows. The panel is the hit area.
+  for (uint8_t i = 0; i < EQ_PRESETS; i++) {
+    int16_t x = (int16_t)(24 + (i % 2) * 222);
+    int16_t y = (int16_t)(76 + (i / 2) * 50);
+    BtnData &b = mkButton(scr, x, y, 210, 42, nullptr, nullptr, ACT_EQ_PRESET, true, 0,
+                          (int8_t)i);
+    eqPresetBtns_[i] = &b;
+    eqPresetLabels_[i] = mkText(b.obj, "-", 69, 13, 2, rgb(P_CREAM));
+  }
+
+  // Three manual bands: name, dB value, bipolar bar and -/+ (12 dB per step is too
+  // coarse, so one tap is 1 dB).
+  static const char *BAND_LABEL[3] = {"BASS", "MID", "TREBLE"};
+  for (uint8_t b = 0; b < 3; b++) {
+    int16_t px = (int16_t)(24 + b * 152);
+    lv_obj_t *p = panel(scr, px, 292, 128, 94, true);
+    mkText(p, BAND_LABEL[b], 12, 6, 2, rgb(P_CREAM));
+    eqBandValues_[b] = mkText(p, "0 dB", 0, 24, 2, rgb(P_CREAM), true, 116);
+    eqBars_[b] = newItem(K_EQBAR, p, 12, 44, 104, 10);
+    eqBars_[b]->a = 12;  // 0 dB is the middle of the bar
+    mkButton(p, 8, 60, 52, 26, nullptr, nullptr, ACT_EQ_BAND_DOWN, true, 1, (int8_t)b);
+    mkButton(p, 68, 60, 52, 26, nullptr, nullptr, ACT_EQ_BAND_UP, true, 2, (int8_t)b);
+  }
+
+  // Back to the faceplate; the whole bar is the hit area (no press highlight).
+  BtnData &back = mkButton(scr, 24, 396, 432, 48, nullptr, nullptr, ACT_EQ_CLOSE, false);
+  mkIcon(back.obj, ICON_LEFT, 16, 12, 1, rgb(P_AMBER));
+  mkText(back.obj, "BACK TO PLAYER", 52, 16, 2, rgb(P_CREAM));
 }
 
 void LvUi::buildSetup(lv_obj_t *scr) {
@@ -772,15 +860,11 @@ void LvUi::update(const UiInfo &i) {
     lv_obj_invalidate(clock_->obj);
   }
 
-  uint8_t lit = (uint8_t)((uint64_t)i.bufferBytes * METER_SEGS / 512000UL);
-  if (lit > METER_SEGS) lit = METER_SEGS;
-  if (lit != meter_->a) {
-    meter_->a = lit;
-    lv_obj_invalidate(meter_->obj);
-  }
-  snprintf(buf, sizeof(buf), "%lu KB  %u%%", (unsigned long)(i.bufferBytes / 1024),
-           (unsigned)(lit * 100 / METER_SEGS));
-  setText(*meterValue_, buf, 20);
+  uint8_t pct = (uint8_t)((uint64_t)i.bufferBytes * 100 / 512000UL);
+  if (pct > 100) pct = 100;
+  snprintf(buf, sizeof(buf), "BUFFER %luK %u%%", (unsigned long)(i.bufferBytes / 1024),
+           (unsigned)pct);
+  setText(*bufferValue_, buf, 26);
 
   if (!i.wifiConnected) {
     setText(*linkValue_, "no link", 8);
@@ -838,6 +922,91 @@ int8_t LvUi::takeAction() {
 void LvUi::showMain() { loadScreen(scrMain_); }
 
 void LvUi::closeList() { loadScreen(scrMain_); }
+
+void LvUi::setVu(uint8_t left, uint8_t right) {
+  if (!vu_) return;
+  if (cur_ != scrMain_) return;  // the meter is only drawn on the faceplate
+
+  // Fast attack, gentle release, so the bars look like a real VU meter instead of a
+  // jittery random-number display. The peak marker falls much more slowly.
+  uint8_t dl = left >= vu_->a ? left : (uint8_t)((vu_->a * 7) / 8);
+  uint8_t dr = right >= vu_->b ? right : (uint8_t)((vu_->b * 7) / 8);
+  vuFrame_++;
+  int16_t pl = vu_->p1;
+  int16_t pr = vu_->p2;
+  if (dl >= pl) {
+    pl = dl;
+  } else if ((vuFrame_ & 3) == 0 && pl > 0) {
+    pl--;
+  }
+  if (dr >= pr) {
+    pr = dr;
+  } else if ((vuFrame_ & 3) == 0 && pr > 0) {
+    pr--;
+  }
+  if (dl == vu_->a && dr == vu_->b && pl == vu_->p1 && pr == vu_->p2) return;
+  vu_->a = dl;
+  vu_->b = dr;
+  vu_->p1 = pl;
+  vu_->p2 = pr;
+  lv_obj_invalidate(vu_->obj);
+}
+
+void LvUi::setEq(uint8_t preset, int8_t low, int8_t mid, int8_t high) {
+  eqPreset_ = preset;
+  eqGain_[0] = low;
+  eqGain_[1] = mid;
+  eqGain_[2] = high;
+  refreshEq();
+}
+
+void LvUi::refreshEq() {
+  for (uint8_t i = 0; i < EQ_PRESETS; i++) {
+    if (!eqPresetBtns_[i]) continue;
+    bool sel = (i == eqPreset_);
+    lv_obj_set_style_bg_color(eqPresetBtns_[i]->obj, rgb(sel ? P_AMBER : P_PANEL_HI), 0);
+    if (eqPresetLabels_[i]) setColor(*eqPresetLabels_[i], rgb(sel ? P_BG : P_CREAM));
+    lv_obj_invalidate(eqPresetBtns_[i]->obj);
+  }
+  if (eqCustom_) {
+    if (eqPreset_ >= eqPresetCount_) {
+      lv_obj_clear_flag(eqCustom_->obj, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(eqCustom_->obj, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  for (uint8_t b = 0; b < 3; b++) {
+    char buf[10];
+    if (eqGain_[b] > 0) {
+      snprintf(buf, sizeof(buf), "+%d dB", eqGain_[b]);
+    } else {
+      snprintf(buf, sizeof(buf), "%d dB", eqGain_[b]);
+    }
+    if (eqBandValues_[b]) {
+      setText(*eqBandValues_[b], buf, 7);
+      setColor(*eqBandValues_[b], rgb(eqGain_[b] == 0 ? P_CREAM : P_AMBER));
+    }
+    if (eqBars_[b]) {
+      uint8_t v = (uint8_t)(eqGain_[b] + 12);
+      if (eqBars_[b]->a != v) {
+        eqBars_[b]->a = v;
+        lv_obj_invalidate(eqBars_[b]->obj);
+      }
+    }
+  }
+}
+
+void LvUi::openEq(const char *const *names, uint8_t count) {
+  eqPresetCount_ = count > EQ_PRESETS ? EQ_PRESETS : count;
+  for (uint8_t i = 0; i < eqPresetCount_; i++) {
+    if (!eqPresetLabels_[i]) continue;
+    setText(*eqPresetLabels_[i], (names && names[i]) ? names[i] : "-", 9);
+    int16_t w = (int16_t)(strlen(eqPresetLabels_[i]->text) * 6 * 2);
+    lv_obj_set_x(eqPresetLabels_[i]->obj, (int16_t)((210 - w) / 2));
+  }
+  refreshEq();
+  loadScreen(scrEq_);
+}
 
 void LvUi::openList(const char *const *names, uint8_t count) {
   listTotal_ = count > LIST_MAX ? LIST_MAX : count;
@@ -935,7 +1104,13 @@ void LvUi::buttonEvent(lv_event_t *e) {
       break;
     case LV_EVENT_CLICKED:
       if (b->action == ACT_VOL_UP || b->action == ACT_VOL_DOWN) break;  // already fired
-      if (b->row >= 0) {
+      if (b->action == ACT_EQ_PRESET) {
+        b->ui->eqPresetSel_ = (uint8_t)b->row;
+        b->ui->setAction(ACT_EQ_PRESET);
+      } else if (b->action == ACT_EQ_BAND_DOWN || b->action == ACT_EQ_BAND_UP) {
+        b->ui->eqBandSel_ = (uint8_t)b->row;
+        b->ui->setAction(b->action);
+      } else if (b->row >= 0) {
         b->ui->listSel_ = (uint8_t)(b->ui->listTop_ + b->row);
         b->ui->setAction(ACT_LIST_ITEM);
       } else if (b->page) {
