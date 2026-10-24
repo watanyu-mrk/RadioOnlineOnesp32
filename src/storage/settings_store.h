@@ -2,7 +2,7 @@
 
 // Persistent settings in NVS - the only module that talks to Preferences.
 //
-// Layout (namespace "radio"): ssid, pass, n, n<i>, u<i>, active.
+// Layout (namespace "radio"): ssid, pass, n, n<i>, u<i>, active, eqp, eql, eqm, eqh.
 // Layout (namespace "touch3"): a..f affine + x0..x8 / y0..y8 raw calibration grid.
 // RadioConfig used to own this; the data is unchanged, so an existing board boots with
 // the settings it already has.
@@ -45,6 +45,12 @@ class SettingsStore {
   void saveStations(const StoredStation *in, uint8_t count);
   uint8_t loadActive();
   void saveActive(uint8_t idx);
+
+  // ---- Equalizer ----------------------------------------------------------------------
+  // eqp is the preset index (0xFF = custom), eql/eqm/eqh the band gains in dB (-12..+12).
+  // Returns false (and leaves flat defaults) when nothing was stored yet.
+  bool loadEq(uint8_t &preset, int8_t &low, int8_t &mid, int8_t &high);
+  void saveEq(uint8_t preset, int8_t low, int8_t mid, int8_t high);
 
   // ---- Touch calibration --------------------------------------------------------------
   bool loadTouchCal(TouchCalData &out);

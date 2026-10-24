@@ -31,6 +31,12 @@ class AudioEngine {
   uint8_t volume() const { return volume_; }
   bool muted() const { return muted_; }
 
+  // 3-band tone control of the library's IIR post-processing (low shelf ~500 Hz,
+  // peaking EQ ~1.8 kHz, high shelf ~6 kHz). Values are dB, clamped to -12..+12.
+  // The library recomputes its coefficients on every sample-rate change, so applying
+  // the stored gains once per play() is enough - the tone survives station changes.
+  void setTone(int8_t low, int8_t mid, int8_t high);
+
   const char *stationName() const { return station_; }
   const char *title() const { return title_; }
 
@@ -47,6 +53,9 @@ class AudioEngine {
   bool started_ = false;
   uint8_t volume_ = AUDIO_VOLUME_DEFAULT;
   bool muted_ = false;
+  int8_t toneLow_ = 0;
+  int8_t toneMid_ = 0;
+  int8_t toneHigh_ = 0;
   char station_[40] = {0};
   char title_[64] = {0};
 };

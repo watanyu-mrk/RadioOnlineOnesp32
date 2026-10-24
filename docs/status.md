@@ -1,6 +1,7 @@
 # สถานะโปรเจกต์ — จุดกลับมาทำต่อ
 
-อัปเดตล่าสุด: **2026-10-22 11:00** · บอร์ดต่ออยู่ที่ **COM5** (USB-SERIAL CH340)
+อัปเดตล่าสุด: **2026-10-24** · branch **`v2-equ`** (tag `v1-basic` คือ v1 ที่ยังไม่มี EQ/VU) ·
+บอร์ดต่ออยู่ที่ **COM5** (USB-SERIAL CH340)
 
 > บอร์ดเปลี่ยนเลขพอร์ตจาก COM29 มาเป็น **COM5** แล้ว (แก้ใน `platformio.ini` ทั้ง 3 env เรียบร้อย)
 > ถ้าเลขพอร์ตเปลี่ยนอีก ให้เช็กด้วย `python -m platformio device list`
@@ -10,7 +11,8 @@
 ## 1. เฟิร์มแวร์ที่อยู่บนบอร์ดตอนนี้
 
 `stream_test` (จอ retro **บน LVGL 8.3.11** + RGB bounce buffer + touch ทุกปุ่ม + IP ในแถบล่าง) —
-แฟลชล่าสุด SUCCESS (2026-10-22 10:55) · โค้ดแยกเป็นโมดูลแล้ว (ดู §1.1)
+โค้ดแยกเป็นโมดูลแล้ว (ดู §1.1) · **v2-equ เพิ่ม EQ 3 แบนด์ + พรีเซ็ต และ VU meter บนหน้าแรก**
+(ดู §1.3) — คอมไพล์ผ่าน แต่ยังไม่ได้แฟลช/ทดสอบบนบอร์ดในเวอร์ชันนี้
 
 ```
 python -m platformio run -e stream_test -t upload
@@ -60,14 +62,44 @@ src/web/         web_setup.{h,cpp}          พอร์ทัล AP (+ HTML ใ
   ซึ่งทำให้ PSRAM cache write-back ที่ RGB DMA ต้องการ + ใช้ bounce buffer เดิม
 - **indev**: `lv_indev_drv_t` pointer อ่าน GT911 ทุก 25 ms ผ่าน `TouchCalibration::map()`;
   ตอนคาลิเบรตต้อง `lvport::touchEnabled(false)` เพราะทั้งสองฝั่งแย่งคอนโทรลเลอร์กัน
-- **หน้าจอ 4 หน้า** (parity กับเวอร์ชัน GFX): faceplate หลัก, LIST (7 แถว + เลื่อนหน้า),
-  SETUP (SSID/รหัส/IP + DONE), TOUCH CAL (จุดเป้ากากบาท 9 จุด)
+- **หน้าจอ 5 หน้า**: faceplate หลัก (มี VU meter), LIST (7 แถว + เลื่อนหน้า),
+  EQUALIZER (v2-equ), SETUP (SSID/รหัส/IP + DONE), TOUCH CAL (จุดเป้ากากบาท 9 จุด)
 - **หน้าตาเดิมเป๊ะ**: palette/พิกัด/ฟอนต์ 5×7 ตัวเดียวกับ Arduino_GFX (`font/glcdfont.h`),
   นาฬิกา 7-segment/มิตเตอร์/ไอคอน/แผ่นเสียงวาดด้วย custom draw callback (`LV_EVENT_DRAW_MAIN`)
 - **UI ไม่แตะ audio/network**: ปุ่มทุกปุ่ม push `LvUi::Action` ลง queue เดียว
   `main.cpp` ดึงด้วย `takeAction()` แล้วเรียกโมดูลเอง (แบบเดียวกับ `handleTouch()` เดิม)
 - ทุก action ใน enum ต้องมี `case` ใน `pumpActions()` — ลืม `ACT_LIST_CLOSE` ทำให้ปุ่ม CLOSE
   เงียบและจอค้างอยู่หน้า LIST (เจอตอนทดสอบ แล้วแก้แล้ว)
+
+### 1.3 v2-equ — equalizer + VU meter (2026-10-24)
+
+แยกมาจาก `v1-basic` (tag บน `main`) เป็น branch `v2-equ` เพิ่มของ 2 อย่าง:
+
+**ก) หน้า EQUALIZER ใหม่** (ปุ่ม `EQ` ในแถบควบคุมหน้าแรก)
+
+- ใช้ IIR 3 แบนด์ของ ESP32-audioI2S (`Audio::setTone(low, mid, high)`, ±12 dB):
+  low shelf ~500 Hz, peaking ~1.8 kHz, high shelf ~6 kHz
+- พรีเซ็ต 8 แบบ: `FLAT POP JAZZ CLASSIC ROCK VOCAL BASS TREBLE` (ตารางค่าอยู่ใน
+  `src/audio/equalizer.cpp`) — แตะแล้วได้ยินทันที ไม่ต้องรีบูต/เปลี่ยนสถานี
+- ปรับเองได้ทีละ 1 dB ต่อแบนด์ด้วย `−`/`+` ใต้ Bass/Mid/Treble; หลังปรับป้ายเปลี่ยนเป็น
+  `CUSTOM` (พรีเซ็ตไม่ถูกไฮไลต์)
+- ค่าเก็บใน NVS namespace `radio`: `eqp` (พรีเซ็ต, `0xFF` = custom), `eql`, `eqm`, `eqh`
+- `AudioEngine::setTone()` เรียก `audio.setTone()` ใน `play()` **หลัง** `setPinout()`
+  (ฟิลเตอร์หารด้วย sample rate จึงต้องรอให้ I2S ถูก config ก่อน) — ไลบรารีคำนวณ
+  สัมประสิทธิ์ใหม่ทุกครั้งที่ sample rate เปลี่ยน ค่าโทนจึงติดไปกับสถานีถัดไปเอง
+- UI เป็น view เหมือนเดิม: ปุ่ม push action `ACT_EQ` / `ACT_EQ_PRESET` / `ACT_EQ_BAND_DOWN` /
+  `ACT_EQ_BAND_UP` / `ACT_EQ_CLOSE` แล้ว `main.cpp` เรียก `Equalizer` เอง
+
+**ข) VU meter บนหน้าแรก**
+
+- 2 แถบ L/R แบ่งช่อง 24 ช่อง ไล่สีเขียว→ส้ม→แดง + จุด peak สีครีมค้างไว้
+- ค่ามาจาก `Audio::getVUlevel()` (MSB = right peak, LSB = left peak, 0..255) ผ่าน
+  `AudioEngine::vu()`; `main.cpp` poll ทุก 50 ms แล้วเรียก `LvUi::setVu()`
+- `setVu()` invalidate เฉพาะ object ของมิเตอร์ (420×36) ไม่วาดเต็มจอ; มี attack ทันที /
+  release 7/8 ต่อรอบ เพื่อให้เข็มดูนุ่ม
+- VU ถูกวาดแทน "มิเตอร์ buffer" แบบเดิม — ค่า buffer ยังแสดงเป็นตัวเลข
+  `BUFFER xxxK xx%` ที่มุมขวาของแผงเดียวกัน
+- AAC ยังรายงาน VU ค่าคงที่ (เหมือน v1) — ตัวเลขบน AAC จึงไม่มีความหมาย ใช้ MP3 ดูได้
 
 ## 2. หน้าจอ (จาก `src/ui/lv_ui.cpp`) — สไตล์ retro hi-fi
 
@@ -171,6 +203,7 @@ python tools/svg2header.py --out include/ui_icons.h \
 | ทัชจริงบนปุ่ม LVGL | **ผ่าน** (ผู้ใช้ยืนยัน “ทัชตรงแล้ว” 2026-10-22 14:3x) | `touch : down x=0 y=0 (raw 156,410)` = ค่าดิบถูกต้อง แต่ `TouchCalibration::map()` คืน (0,0) เพราะ branch identity หาย; แก้แล้วใน `src/display/touch_calibration.cpp` |
 | นาฬิกา 7-seg บน LVGL | **ผ่าน** (ยืนยันจาก framebuffer map) | `clockFace()` วาดที่พิกัด relative → ถูก clip; แก้ให้บวก `ox,oy` แล้วเห็น `15:02:39` ในแผนที่ 8 px |
 | ตัวควบคุม GT911 ยังสแกนและตอบ I²C | ผ่าน | `ok/fail = 99400 / 0`, `status=0x80`, product id `911`, config `ver 0x43 xmax/ymax 480/480`, config block 0x8047–0x80FE อ่านครบ |
+| **v2-equ (2026-10-24)** | **คอมไพล์ผ่าน** (`stream_test` 703.75 s, RAM 23.2 % / Flash 33.0 %); **ยังไม่ทดสอบบนบอร์ด** | `build_stream.log`: `SUCCESS`; ต้องตรวจต่อ: ปุ่ม `EQ` เปิดหน้าใหม่, เปลี่ยนพรีเซ็ตแล้วเสียงเปลี่ยน, `−/+` เป็น CUSTOM, ค่า EQ อยู่หลังรีบูต, VU วิ่งตอนเล่น MP3 |
 
 ## 4. ปัญหาที่ค้างอยู่
 

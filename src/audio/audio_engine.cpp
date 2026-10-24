@@ -28,6 +28,10 @@ bool AudioEngine::play(const char *url) {
     audio.setPinout(I2S_BCLK, I2S_LRCLK, I2S_DOUT);
     pinsReady_ = true;
   }
+  // setPinout() configured the I2S rate, so the tone filters can be calculated safely
+  // now (they divide by the sample rate). Every new stream re-runs this with the stored
+  // gains, because connecttohost() reconfigures I2S.
+  audio.setTone(toneLow_, toneMid_, toneHigh_);
   audio.setVolume(muted_ ? 0 : volume_);
   station_[0] = 0;  // the next station announces itself; do not show the old name
   title_[0] = 0;
@@ -54,6 +58,15 @@ void AudioEngine::setVolume(uint8_t level) {
 void AudioEngine::setMuted(bool muted) {
   muted_ = muted;
   audio.setVolume(muted_ ? 0 : volume_);
+}
+
+void AudioEngine::setTone(int8_t low, int8_t mid, int8_t high) {
+  toneLow_ = low < -12 ? -12 : (low > 12 ? 12 : low);
+  toneMid_ = mid < -12 ? -12 : (mid > 12 ? 12 : mid);
+  toneHigh_ = high < -12 ? -12 : (high > 12 ? 12 : high);
+  // Before the first play() the I2S channel does not exist yet; play() applies the
+  // values right after setPinout(), so nothing is lost.
+  if (pinsReady_) audio.setTone(toneLow_, toneMid_, toneHigh_);
 }
 
 uint32_t AudioEngine::bitrate() { return audio.getBitRate(); }
